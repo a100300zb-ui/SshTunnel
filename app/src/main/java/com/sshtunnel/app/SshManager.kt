@@ -12,6 +12,9 @@ import java.net.ServerSocket
 import java.net.Socket
 import java.util.concurrent.Executors
 import java.util.concurrent.atomic.AtomicBoolean
+import javax.net.ssl.SNIHostName
+import javax.net.ssl.SSLSocket
+import javax.net.ssl.SSLSocketFactory
 
 sealed class ConnState {
     object Disconnected : ConnState()
@@ -24,7 +27,8 @@ data class ServerConfig(
     val host: String,
     val port: Int,
     val username: String,
-    val password: String
+    val password: String,
+    val sni: String = ""
 )
 
 /**
@@ -53,6 +57,10 @@ class SshManager {
         val jsch = JSch()
         val s = jsch.getSession(config.username, config.host, config.port)
         s.setPassword(config.password)
+        if (config.sni.isNotBlank()) {
+            log("TLS enabled, SNI = ${config.sni}")
+            s.setSocketFactory(TlsSocketFactory(config.sni.trim(), log))
+        }
         s.setConfig("StrictHostKeyChecking", "no")
         s.setConfig("PreferredAuthentications", "password,keyboard-interactive")
         s.setServerAliveInterval(15_000)
@@ -191,4 +199,35 @@ class SshManager {
     }
 
     suspend fun disconnect() = withContext(Dispatchers.IO) { stopInternal() }
+}
+
+
+/**
+ * Wraps the SSH connection inside TLS and sends [sni] in the ClientHello.
+ * The server must accept TLS and forward the decrypted stream to sshd
+ * (for example stunnel or nginx stream on port 443).
+ */
+class TlsSocketFactory(
+    private val sni: String,
+    private val log: (String) -> Unit
+) : com.jcraft.jsch.SocketFactory {
+
+    private var tls: SSLSocket? = null
+
+    override fun createSocket(host: String, port: Int): Socket {
+        val raw = Socket()
+        raw.connect(java.net.InetSocketAddress(host, port), 15_000)
+        val factory = SSLSocketFactory.getDefault() as SSLSocketFactory
+        val ssl = factory.createSocket(raw, host, port, true) as SSLSocket
+        val params = ssl.sslParameters
+        params.serverNames = listOf(SNIHostName(sni))
+        ssl.sslParameters = params
+        ssl.startHandshake()
+        log("TLS handshake OK (${ssl.session.protocol})")
+        tls = ssl
+        return ssl
+    }
+
+    override fun getInputStream(socket: Socket): InputStream = socket.getInputStream()
+    override fun getOutputStream(socket: Socket): OutputStream = socket.getOutputStream()
 }
