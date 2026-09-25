@@ -44,6 +44,7 @@ class MainActivity : ComponentActivity() {
         var port by remember { mutableStateOf("22") }
         var user by remember { mutableStateOf("") }
         var pass by remember { mutableStateOf("") }
+        var sni by remember { mutableStateOf("") }
         var state by remember { mutableStateOf<ConnState>(ConnState.Disconnected) }
         val logs = remember { mutableStateListOf<String>() }
 
@@ -90,6 +91,15 @@ class MainActivity : ComponentActivity() {
                     modifier = Modifier.fillMaxWidth()
                 )
 
+                OutlinedTextField(
+                    value = sni, onValueChange = { sni = it },
+                    label = { Text("SNI (server name)") },
+                    supportingText = { Text("Leave empty for plain SSH without TLS") },
+                    singleLine = true,
+                    enabled = !busy && !connected,
+                    modifier = Modifier.fillMaxWidth()
+                )
+
                 Button(
                     onClick = {
                         if (connected) {
@@ -107,7 +117,7 @@ class MainActivity : ComponentActivity() {
                             state = ConnState.Connecting
                             scope.launch {
                                 try {
-                                    ssh.connect(ServerConfig(host.trim(), p, user.trim(), pass)) { addLog(it) }
+                                    ssh.connect(ServerConfig(host.trim(), p, user.trim(), pass, sni.trim())) { addLog(it) }
                                     state = ConnState.Connected(1080)
                                 } catch (e: Exception) {
                                     addLog("Error: ${e.message}")
